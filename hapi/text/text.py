@@ -54,6 +54,12 @@ __all__ = [
 
 
 class RNNCell(Layer):
+    """
+    RNNCell is the base class for abstraction representing the calculations
+    mapping the input and state to the output and new state. It is suitable to
+    and mostly used in RNN.
+    """
+
     def get_initial_states(self,
                            batch_ref,
                            shape=None,
@@ -68,17 +74,19 @@ class RNNCell(Layer):
             batch_ref: A (possibly nested structure of) tensor variable[s].
                 The first dimension of the tensor will be used as batch size to
                 initialize states.
-            shape: A (possiblely nested structure of) shape[s], where a shape is
+            shape: A (possibly nested structure of) shape[s], where a shape is
                 represented as a list/tuple of integer). -1(for batch size) will
                 beautomatically inserted if shape is not started with it. If None,
                 property `state_shape` will be used. The default value is None.
-            dtype: A (possiblely nested structure of) data type[s]. The structure
+            dtype: A (possibly nested structure of) data type[s]. The structure
                 must be same as that of `shape`, except when all tensors' in states
                 has the same data type, a single data type can be used. If None and
                 property `cell.state_shape` is not available, float32 will be used
                 as the data type. The default value is None.
             init_value: A float value used to initialize states.
-
+            batch_dim_idx: An integer indicating which dimension of the tensor in
+                inputs represents batch size.  The default value is 0.
+        
         Returns:
             Variable: tensor variable[s] packed in the same structure provided \
                 by shape, representing the initialized states.
@@ -168,46 +176,63 @@ class RNNCell(Layer):
 
 class BasicLSTMCell(RNNCell):
     """
-    ****
-    BasicLSTMUnit class, Using basic operator to build LSTM
-    The algorithm can be described as the code below.
-        .. math::
-           i_t &= \sigma(W_{ix}x_{t} + W_{ih}h_{t-1} + b_i)
-           f_t &= \sigma(W_{fx}x_{t} + W_{fh}h_{t-1} + b_f + forget_bias )
-           o_t &= \sigma(W_{ox}x_{t} + W_{oh}h_{t-1} + b_o)
-           \\tilde{c_t} &= tanh(W_{cx}x_t + W_{ch}h_{t-1} + b_c)
-           c_t &= f_t \odot c_{t-1} + i_t \odot \\tilde{c_t}
-           h_t &= o_t \odot tanh(c_t)
-        - $W$ terms denote weight matrices (e.g. $W_{ix}$ is the matrix
-          of weights from the input gate to the input)
-        - The b terms denote bias vectors ($bx_i$ and $bh_i$ are the input gate bias vector).
-        - sigmoid is the logistic sigmoid function.
-        - $i, f, o$ and $c$ are the input gate, forget gate, output gate,
-          and cell activation vectors, respectively, all of which have the same size as
-          the cell output activation vector $h$.
-        - The :math:`\odot` is the element-wise product of the vectors.
-        - :math:`tanh` is the activation functions.
-        - :math:`\\tilde{c_t}` is also called candidate hidden state,
-          which is computed based on the current input and the previous hidden state.
-    Args:
-        name_scope(string) : The name scope used to identify parameter and bias name
-        hidden_size (integer): The hidden size used in the Unit.
-        param_attr(ParamAttr|None): The parameter attribute for the learnable
-            weight matrix. Note:
-            If it is set to None or one attribute of ParamAttr, lstm_unit will
-            create ParamAttr as param_attr. If the Initializer of the param_attr
-            is not set, the parameter is initialized with Xavier. Default: None.
-        bias_attr (ParamAttr|None): The parameter attribute for the bias
-            of LSTM unit.
-            If it is set to None or one attribute of ParamAttr, lstm_unit will
-            create ParamAttr as bias_attr. If the Initializer of the bias_attr
-            is not set, the bias is initialized as zero. Default: None.
-        gate_activation (function|None): The activation function for gates (actGate).
-                                  Default: 'fluid.layers.sigmoid'
-        activation (function|None): The activation function for cells (actNode).
-                             Default: 'fluid.layers.tanh'
-        forget_bias(float|1.0): forget bias used when computing forget gate
-        dtype(string): data type used in this unit
+    Long-Short Term Memory cell. It is a wrapper for 
+
+    The formula used is as follow:
+
+    .. math::
+
+        i_{t} & = act_g(W_{x_{i}}x_{t} + W_{h_{i}}h_{t-1} + b_{i})
+
+        f_{t} & = act_g(W_{x_{f}}x_{t} + W_{h_{f}}h_{t-1} + b_{f} + forget\\_bias)
+
+        c_{t} & = f_{t}c_{t-1} + i_{t} act_c (W_{x_{c}}x_{t} + W_{h_{c}}h_{t-1} + b_{c})
+
+        o_{t} & = act_g(W_{x_{o}}x_{t} + W_{h_{o}}h_{t-1} + b_{o})
+
+        h_{t} & = o_{t} act_c (c_{t})
+    
+    For more details, please refer to `RECURRENT NEURAL NETWORK REGULARIZATION <http://arxiv.org/abs/1409.2329>`_
+
+    Parameters:
+        hidden_size (int): The hidden size in the LSTM cell.
+        param_attr(ParamAttr, optional): The parameter attribute for the learnable
+            weight matrix. Default: None.
+        bias_attr (ParamAttr, optional): The parameter attribute for the bias
+            of LSTM. Default: None.
+        gate_activation (function, optional): The activation function for :math:`act_g`.
+            Default: 'fluid.layers.sigmoid'.
+        activation (function, optional): The activation function for :math:`act_h`.
+            Default: 'fluid.layers.tanh'.
+        forget_bias(float, optional): forget bias used when computing forget gate.
+            Default 1.0
+        dtype(string, optional): The data type used in this cell. Default float32.
+        forget_gate_weights (dict, optional): A dict includes `w`, `h` and `b`
+            as keys, and the corresponding values should be instances of Parameter
+            which represent :math:`W_{x_{f}}, W_{h_{f}}, b_{f}` and have shape
+            [input_size, hidden_size], [hidden_size, hidden_size], [hidden_size]
+            separately. It is used for reusing and sharing weights when provided,
+            otherwise create these parameters. Note that parameters from input
+            gate, forget gate and cell would be concatenated in implementation.
+        input_gate_weights (dict, optional): A dict includes `w`, `h` and `b` as keys,
+            and the corresponding values should be instances of Parameter which
+            represent :math:`W_{x_{i}}, W_{h_{i}}, b_{i}` separately. It has the
+            same usage as :attr:`forget_gate_weights`.
+        output_gate_weights (dict, optional): A dict includes `w`, `h` and `b` as keys,
+            and the corresponding values should be instances of Parameter which
+            represent :math:`W_{x_{o}}, W_{h_{o}}, b_{o}` separately. It has the
+            same usage as :attr:`forget_gate_weights`.
+        cell_weights (dict, optional): A dict includes `w`, `h` and `b` as keys,
+            and the corresponding values should be instances of Parameter which
+            represent :math:`W_{x_{c}}, W_{h_{c}}, b_{c}` separately. It has the
+            same usage as :attr:`forget_gate_weights`.
+
+    Examples:
+
+        .. code-block:: python
+
+            import paddle.fluid.layers as layers
+            cell = LSTMCell(hidden_size=128, hidden_size=256)
     """
 
     def __init__(self,
@@ -770,6 +795,46 @@ class BasicGRUCell(RNNCell):
 
 
 class RNN(fluid.dygraph.Layer):
+    """
+    RNN creates a recurrent neural network specified by RNNCell `cell`, which
+    performs :code:`cell.forward()` repeatedly until reaches to the maximum
+    length of `inputs`.
+
+    Parameters:
+        cell(RNNCell): An instance of `RNNCell`.
+        time_major(bool, optional): Indicate the data layout of Tensor included
+            in `input` and `output` tensors. If `False`, the data layout would
+            be batch major with shape `[batch_size, sequence_length, ...]`.  If
+            `True`, the data layout would be time major with shape
+            `[sequence_length, batch_size, ...]`. Default: `False`.
+        is_reverse(bool, optional): Indicate whether to calculate in the reverse
+            order of input sequences. Default: `False`.
+
+    Returns:
+        tuple: A tuple( :code:`(final_outputs, final_states)` ) including the final \
+            outputs and states, both are Tensor or nested structure of Tensor. \
+            `final_outputs` has the same structure and data types as \
+            the returned `outputs` of :code:`cell.call` , and each Tenser in `final_outputs` \
+            stacks all time steps' counterpart in `outputs` thus has shape `[batch_size, sequence_length, ...]` \
+            for `time_major == False` or `[sequence_length, batch_size, ...]` for `time_major == True`. \
+            `final_states` is the counterpart at last time step of initial states, \
+            thus has the same structure with it and has tensors with same shapes \
+            and data types.
+            
+
+    Examples:
+
+        .. code-block:: python
+            
+            import paddle.fluid as fluid
+
+            inputs = fluid.data(name="inputs",
+                                shape=[-1, 32, 128],
+                                dtype="float32")
+            cell = fluid.layers.GRUCell(hidden_size=128)
+            outputs = fluid.layers.rnn(cell=cell, inputs=inputs)
+    """
+
     def __init__(self, cell, is_reverse=False, time_major=False):
         super(RNN, self).__init__()
         self.cell = cell
@@ -785,6 +850,52 @@ class RNN(fluid.dygraph.Layer):
                 initial_states=None,
                 sequence_length=None,
                 **kwargs):
+        """
+        Performs :code:`cell.forward()` repeatedly until reaches to the maximum
+        length of `inputs`.
+
+        Parameters:
+            inputs(Variable): A (possibly nested structure of) tensor variable[s]. 
+                The shape of tensor should be `[batch_size, sequence_length, ...]`
+                for `time_major == False` or `[sequence_length, batch_size, ...]`
+                for `time_major == True`. It represents the inputs to be unrolled
+                in RNN.
+            initial_states(Variable, optional): A (possibly nested structure of)
+                tensor variable[s], representing the initial state for RNN. 
+                If not provided, `cell.get_initial_states` would be used to produce
+                the initial state. Default None.
+            sequence_length(Variable, optional): A tensor with shape `[batch_size]`.
+                It stores real length of each instance, thus enables users to extract
+                the last valid state when past a batch element's sequence length for
+                correctness. If not provided, the paddings would be treated same as
+                non-padding inputs. Default None.
+            **kwargs: Additional keyword arguments. Arguments passed to `cell.forward`. 
+
+        Returns:
+            tuple: A tuple( :code:`(final_outputs, final_states)` ) including \
+                the final outputs and states, both are Tensor or nested structure \
+                of Tensor. `final_outputs` has the same structure and data types \
+                as the returned `outputs` of :code:`cell.forward` , and each \
+                Tenser in `final_outputs` stacks all time steps' counterpart \
+                in `outputs` thus has shape `[batch_size, sequence_length, ...]` \
+                for `time_major == False` or `[sequence_length, batch_size, ...]` \
+                for `time_major == True`. `final_states` is the counterpart at \
+                last time step of initial states, thus has the same structure \
+                with it and has tensors with same shapes and data types.
+
+        Examples:
+
+            .. code-block:: python
+                
+                import paddle.fluid as fluid
+
+                inputs = fluid.data(name="inputs",
+                                    shape=[-1, 32, 128],
+                                    dtype="float32")
+                cell = fluid.layers.GRUCell(hidden_size=128)
+                outputs = fluid.layers.rnn(cell=cell, inputs=inputs)
+        """
+
         if fluid.in_dygraph_mode():
 
             class ArrayWrapper(object):
@@ -874,6 +985,72 @@ class RNN(fluid.dygraph.Layer):
 
 
 class DynamicDecode(Layer):
+    """
+    DynamicDecode integrates an Decoder instance to perform dynamic decoding.
+    
+    It performs :code:`decoder.step()` repeatedly until the returned Tensor
+    indicating finished status contains all True values or the number of
+    decoding step reaches to :attr:`max_step_num`.
+
+    :code:`decoder.initialize()` would be called once before the decoding loop.
+    If the `decoder` has implemented `finalize` method, :code:`decoder.finalize()`
+    would be called once after the decoding loop.
+
+    Parameters:
+        decoder(Decoder): An instance of `Decoder`.
+        max_step_num(int, optional): The maximum number of steps. If not provided,
+            decode until the decoder is fully done, or in other words, the returned
+            Tensor by :code:`decoder.step()` indicating finished status contains
+            all True. Default `None`.
+        output_time_major(bool, optional): Indicate the data layout of Tensor included
+            in the final outputs(the first returned value of this method). If
+            attr:`False`, the data layout would be batch major with shape
+            `[batch_size, seq_len, ...]`.  If attr:`True`, the data layout would
+            be time major with shape `[seq_len, batch_size, ...]`. Default: `False`.
+        impute_finished(bool, optional): If `True`, then states get copied through
+            for batch entries which are marked as finished, which differs with the
+            unfinished using the new states returned by :code:`decoder.step()` and
+            ensures that the final states have the correct values. Otherwise, states
+            wouldn't be copied through when finished. If the returned `final_states`
+            is needed, it should be set as True, which causes some slowdown.
+            Default `False`.
+        is_test(bool, optional): A flag indicating whether to use test mode. In
+            test mode, it is more memory saving. Default `False`.
+        return_length(bool, optional):  A flag indicating whether to return an
+            extra Tensor variable in the output tuple, which stores the actual
+            lengths of all decoded sequences. Default `False`.
+
+    Examples:
+
+        .. code-block:: python
+            
+            import paddle.fluid as fluid
+            import paddle.fluid.layers as layers
+            from paddle.fluid.layers import GRUCell, BeamSearchDecoder, dynamic_decode
+
+            encoder_output = fluid.data(name="encoder_output",
+                                    shape=[-1, 32, 128],
+                                    dtype="float32")
+            trg_embeder = lambda x: fluid.embedding(
+                x, size=[10000, 128], param_attr=fluid.ParamAttr(name="trg_embedding"))
+            output_layer = lambda x: layers.fc(x,
+                                            size=10000,
+                                            num_flatten_dims=len(x.shape) - 1,
+                                            param_attr=fluid.ParamAttr(name=
+                                                                        "output_w"),
+                                            bias_attr=False)
+            decoder_cell = GRUCell(hidden_size=128)
+            decoder = BeamSearchDecoder(decoder_cell,
+                                        start_token=0,
+                                        end_token=1,
+                                        beam_size=4,
+                                        embedding_fn=trg_embeder,
+                                        output_fn=output_layer)
+
+            outputs = dynamic_decode(
+                decoder=decoder, inits=decoder_cell.get_initial_states(encoder_output))
+    """
+
     def __init__(self,
                  decoder,
                  max_step_num=None,
@@ -890,6 +1067,66 @@ class DynamicDecode(Layer):
         self.return_length = return_length
 
     def forward(self, inits=None, **kwargs):
+        """
+        Performs :code:`decoder.step()` repeatedly until the returned Tensor
+        indicating finished status contains all True values or the number of
+        decoding step reaches to :attr:`max_step_num`.
+
+        :code:`decoder.initialize()` would be called once before the decoding loop.
+        If the `decoder` has implemented `finalize` method, :code:`decoder.finalize()`
+        would be called once after the decoding loop.
+
+        Parameters:
+            inits(object, optional): Argument passed to `decoder.initialize`. 
+                Default `None`.
+            **kwargs: Additional keyword arguments. Arguments passed to `decoder.step`. 
+
+        Returns:
+            tuple: A tuple( :code:`(final_outputs, final_states, sequence_lengths)` ) \
+                when `return_length` is True, otherwise a tuple( :code:`(final_outputs, final_states)` ). \
+                The final outputs and states, both are Tensor or nested structure of Tensor. \
+                `final_outputs` has the same structure and data types as the :code:`outputs` \
+                returned by :code:`decoder.step()` , and each Tenser in `final_outputs` \
+                is the stacked of all decoding steps' outputs, which might be revised \
+                by :code:`decoder.finalize()` if the decoder has implemented `finalize`. \
+                `final_states` is the counterpart at last time step of initial states \
+                returned by :code:`decoder.initialize()` , thus has the same structure \
+                with it and has tensors with same shapes and data types. `sequence_lengths` \
+                is an `int64` tensor with the same shape as `finished` returned \
+                by :code:`decoder.initialize()` , and it stores the actual lengths of \
+                all decoded sequences.
+                
+
+        Examples:
+
+            .. code-block:: python
+                
+                import paddle.fluid as fluid
+                import paddle.fluid.layers as layers
+                from paddle.fluid.layers import GRUCell, BeamSearchDecoder, dynamic_decode
+
+                encoder_output = fluid.data(name="encoder_output",
+                                        shape=[-1, 32, 128],
+                                        dtype="float32")
+                trg_embeder = lambda x: fluid.embedding(
+                    x, size=[10000, 128], param_attr=fluid.ParamAttr(name="trg_embedding"))
+                output_layer = lambda x: layers.fc(x,
+                                                size=10000,
+                                                num_flatten_dims=len(x.shape) - 1,
+                                                param_attr=fluid.ParamAttr(name=
+                                                                            "output_w"),
+                                                bias_attr=False)
+                decoder_cell = GRUCell(hidden_size=128)
+                decoder = BeamSearchDecoder(decoder_cell,
+                                            start_token=0,
+                                            end_token=1,
+                                            beam_size=4,
+                                            embedding_fn=trg_embeder,
+                                            output_fn=output_layer)
+
+                outputs = dynamic_decode(
+                    decoder=decoder, inits=decoder_cell.get_initial_states(encoder_output))
+        """
         if fluid.in_dygraph_mode():
 
             class ArrayWrapper(object):
